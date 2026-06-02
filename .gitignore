@@ -179,3 +179,22 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+.terraform
+
+infra/.terraform/
+infra/.terraform.lock.hcl
+infra/terraform.tfstate
+infra/terraform.tfstate.backup
+infra/terraform.tfvars
+ 
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+ 
+# --- Local DB used for local dev only ---
+local.db
+ 
+# --- Env / secrets ---
+.env

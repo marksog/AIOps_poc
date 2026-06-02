@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout-svc
+  labels: { app: checkout-svc }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: checkout-svc }
+  template:
+    metadata:
+      labels: { app: checkout-svc }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: checkout-svc
+        image: <ECR_IMAGE>
+        ports:
+        - containerPort: 8000
+        env:
+        # DB connection string assembled from the Secret (see secret.yaml).
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: checkout-db
+              key: database_url
+        # Incident dials — change these live to manufacture incidents:
+        #   kubectl set env deployment/checkout-svc FAILURE_RATE=0.4
+        - name: FAILURE_RATE
+          value: "0.0"
+        - name: LATENCY_CEIL
+          value: "0.2"
+        - name: DB_POOL_SIZE
+          value: "5"
+        livenessProbe:
+          httpGet: { path: /, port: 8000 }
+          initialDelaySeconds: 5
+        readinessProbe:
+          httpGet: { path: /healthz, port: 8000 }  # checks DB connectivity
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests: { cpu: "100m", memory: "128Mi" }
+          limits:   { cpu: "250m", memory: "256Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkout-svc
+  labels: { app: checkout-svc }
+spec:
+  selector: { app: checkout-svc }
+  ports:
+  - port: 80
+    targetPort: 8000
