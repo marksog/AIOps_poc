@@ -1,7 +1,0 @@
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-prometheus_client==0.21.1
-sqlalchemy==2.0.36
-psycopg[binary,pool]==3.2.3
-aiosqlite==0.20.0
-greenlet==3.1.1
