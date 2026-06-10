@@ -1,9 +1,26 @@
-# tests/test_app.py
+import os
+
+# Force tests onto a dedicated, throwaway SQLite DB BEFORE app modules load,
+# so we never depend on (or pollute) the local.db used for manual runs. Must
+# run before importing app.config/app.db, because the engine is created at
+# import time from settings.database_url.
+os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test.db"
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.config import settings
 from app.main import app
+
+
+@pytest.fixture(autouse=True)
+async def _ensure_schema():
+    """Create tables before each test. The app creates them in its lifespan
+    handler, but ASGITransport doesn't trigger lifespan, so we do it here.
+    Without this, DB writes hit a missing table -> 500 (only on a fresh DB,
+    which is why CI caught it and a stale local.db didn't)."""
+    from app.db import init_db
+    await init_db()
 
 
 # AsyncClient + ASGITransport drives the app in-process — no running
@@ -14,7 +31,6 @@ async def client():
         transport=ASGITransport(app=app), base_url="http://test"
     ) as c:
         yield c
-
 
 @pytest.mark.asyncio
 async def test_healthz_ok(client):
