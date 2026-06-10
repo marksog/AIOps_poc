@@ -65,9 +65,10 @@ jobs:
         if: github.event_name == 'push'
         run: |
           kubectl apply -f k8s/service.yaml
-          kubectl apply -f k8s/deployment.yaml
-          # Point the deployment at the freshly-pushed SHA image.
-          kubectl set image deployment/checkout-svc checkout-svc="$IMAGE"
+          kubectl apply -f k8s/service.yaml
+          # Substitute the real image into the manifest before applying, so
+          # the Deployment never goes through an invalid-placeholder state.
+          sed "s|IMAGE_PLACEHOLDER|${IMAGE}|g" k8s/deployment.yaml | kubectl apply -f -
 
       # The GATE: wait for the rollout to succeed. If new pods don't become
       # ready within the timeout, this FAILS the job — a bad deploy can't pass

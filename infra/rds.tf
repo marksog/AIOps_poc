@@ -89,3 +89,17 @@ resource "aws_secretsmanager_secret_version" "db" {
     dbname   = aws_db_instance.main.db_name
   })
 }
+
+# EKS managed node groups egress under the EKS-MANAGED cluster security group
+# (auto-created by EKS), NOT the custom cluster SG we authored. So the RDS
+# rule trusting our custom SG never matches real pod traffic. Trust the
+# managed cluster SG too — this is the SG the packets actually wear.
+resource "aws_security_group_rule" "rds_from_eks_managed" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.rds.id
+  source_security_group_id = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
+  description              = "Postgres from EKS-managed cluster SG (real pod egress identity)"
+}
