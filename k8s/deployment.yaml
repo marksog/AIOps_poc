@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout-svc
+  namespace: default
+  labels:
+    app: checkout-svc
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: checkout-svc
+  template:
+    metadata:
+      labels:
+        app: checkout-svc
+    spec:
+      containers:
+        - name: checkout-svc
+          # PLACEHOLDER. The workflow rewrites this with the ECR URL + git SHA
+          # via `kubectl set image`, so the deployed image is always a specific,
+          # immutable SHA tag — never :latest.
+          image: IMAGE_PLACEHOLDER
+          ports:
+            - containerPort: 8000
+          env:
+            # DATABASE_URL comes from the k8s Secret (Phase 5 builds it from
+            # Secrets Manager). Until then this key won't exist and the pod
+            # falls back to... nothing — so we deploy Phase 5's secret first.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: checkout-db
+                  key: DATABASE_URL
+          # Probes hit the REAL /healthz, which does a SELECT 1. So "ready"
+          # genuinely means "can talk to its DB" — the rollout gate in the
+          # workflow relies on this being honest.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

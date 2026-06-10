@@ -1,0 +1,30 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local DB
+local.db
+*.db
+
+# Env / secrets
+.env
+
+# Terraform — state, vars, provider cache
+infra/.terraform/
+infra/.terraform.lock.hcl
+infra/*.tfstate
+infra/*.tfstate.*
+infra/*.tfvars
+infra/bootstrap/.terraform/
+infra/bootstrap/*.tfstate
+infra/bootstrap/*.tfstate.*
+
+# Catch-all: state files anywhere, not just infra/
+*.tfstate
+*.tfstate.*
+**/.terraform/
+
+# kube
+kubeconfig
