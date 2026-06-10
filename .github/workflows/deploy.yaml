@@ -1,0 +1,77 @@
+name: build-and-deploy-aiops-poc
+
+on:
+  push:
+    branches: [main]        # only main deploys
+  pull_request:
+    branches: [main]        # PRs build+test but do NOT deploy
+
+# Required for OIDC: lets the workflow request a token to assume the AWS role.
+# Without id-token: write, the keyless auth can't work.
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: 681721397035.dkr.ecr.us-east-1.amazonaws.com/aiops-poc/checkout-svc
+  CLUSTER: aiops-poc
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Run the test suite first. A failing test stops the pipeline before
+      # anything gets built or deployed — your 8 tests as the merge gate.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install and test
+        run: |
+          pip install -r requirements.txt
+          pytest -v
+
+      # Assume the AWS role via OIDC. No stored keys — GitHub mints a short-
+      # lived token, AWS verifies it against the trust policy (repo + main),
+      # and hands back temporary credentials.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Build and push, tagged with the git SHA. Immutable tag = this exact
+      # commit maps to this exact image, forever. Enables clean rollbacks.
+      - name: Build and push image
+        run: |
+          IMAGE="${ECR_REPO}:${GITHUB_SHA}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      # Everything past here is deploy — skip it entirely on pull_request.
+      - name: Update kubeconfig
+        if: github.event_name == 'push'
+        run: aws eks update-kubeconfig --name "$CLUSTER" --region "$AWS_REGION"
+
+      - name: Deploy
+        if: github.event_name == 'push'
+        run: |
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/deployment.yaml
+          # Point the deployment at the freshly-pushed SHA image.
+          kubectl set image deployment/checkout-svc checkout-svc="$IMAGE"
+
+      # The GATE: wait for the rollout to succeed. If new pods don't become
+      # ready within the timeout, this FAILS the job — a bad deploy can't pass
+      # silently. This is why /healthz must be honest (it checks the DB).
+      - name: Gate on healthy rollout
+        if: github.event_name == 'push'
+        run: kubectl rollout status deployment/checkout-svc --timeout=120s

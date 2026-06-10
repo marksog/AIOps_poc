@@ -193,3 +193,30 @@ resource "aws_iam_role_policy" "github_deployer" {
     ]
   })
 }
+
+# grant the GitHub deployer role cluster access
+# so CI's kubectl can apply manifests. IAM gets it to the EKS API door;
+# THIS gets it Kubernetes RBAC permissions inside the cluster.
+
+resource "aws_eks_access_entry" "github_deployer" {
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = aws_iam_role.github_deployer.arn
+  type          = "STANDARD"
+}
+
+# Bind the deployer to a cluster policy. EDIT scope = can manage workloads
+# (deployments, services, etc.) but NOT cluster-admin. Least privilege for
+# CI: enough to deploy, not enough to reconfigure the cluster. Scoped to
+# the default namespace where checkout-svc lives.
+resource "aws_eks_access_policy_association" "github_deployer" {
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = aws_iam_role.github_deployer.arn
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy"
+
+  access_scope {
+    type       = "namespace"
+    namespaces = ["default"]
+  }
+
+  depends_on = [aws_eks_access_entry.github_deployer]
+}
