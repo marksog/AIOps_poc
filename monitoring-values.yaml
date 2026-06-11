@@ -1,0 +1,43 @@
+# Trims kube-prometheus-stack to fit 2x t3.medium and keeps the focus on
+# what THIS project needs: Prometheus + Alertmanager + the Operator + Grafana.
+
+# Prometheus itself — modest resource requests + short retention (demo, not prod).
+prometheus:
+  prometheusSpec:
+    retention: 6h
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+    # CRITICAL: by default the Operator only selects ServiceMonitors/Rules that
+    # carry its release label. Setting these to false makes Prometheus pick up
+    # ANY ServiceMonitor/PrometheusRule in the cluster, so our checkout-svc
+    # monitor and SLO rules get scraped without label gymnastics.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+# Grafana — keep it, small footprint. Default admin password set explicitly.
+grafana:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  adminPassword: admin
+
+# Trim components that add node pressure and aren't needed for the demo.
+# kube-state-metrics and node-exporter are useful but heavy; node-exporter
+# especially runs a pod per node. Keep kube-state-metrics (cheap, useful),
+# drop the bulky default dashboards' scrape load is fine.
+nodeExporter:
+  enabled: true
+
+# Alertmanager — small. This is where burn-rate alerts land, and in Phase 8
+# its webhook fires Sentinel.
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi

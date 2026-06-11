@@ -1,0 +1,24 @@
+# Tells the Prometheus Operator to scrape checkout-svc. The operator watches
+# for ServiceMonitor CRs and rewrites Prometheus's scrape config automatically.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: checkout-svc
+  namespace: default
+  labels:
+    app: checkout-svc
+spec:
+  # WHICH services to scrape: any Service carrying app=checkout-svc.
+  selector:
+    matchLabels:
+      app: checkout-svc
+  namespaceSelector:
+    matchNames:
+      - default
+  endpoints:
+    # port: http MUST match the NAMED port on the Service (k8s/service.yaml).
+    # If the Service port were unnamed, this silently matches nothing — the
+    # #1 "my target isn't showing up" gotcha. The name is the join key.
+    - port: http
+      path: /metrics
+      interval: 15s

@@ -1,0 +1,84 @@
+# SLO: 99.9% of /checkout requests succeed. Error budget = 0.1%.
+# Multi-window multi-burn-rate alerts per the Google SRE Workbook.
+#
+# Structure:
+#   1) A recording rule computing the checkout error ratio over several
+#      windows (5m, 30m, 1h, 2h, 6h). Precomputing keeps alert exprs simple
+#      and fast.
+#   2) Burn-rate alerts pairing a long + short window so they fire quickly
+#      AND stop quickly (anti-flap).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: checkout-slo
+  namespace: monitoring          # lives with the monitoring stack
+  labels:
+    release: monitoring          # so the Operator (our release) selects it
+spec:
+  groups:
+    # --- Recording rules: the error ratio over multiple windows ----------
+    - name: checkout-slo-sli
+      rules:
+        # For each window, ratio = errors / total. We use the checkout path
+        # only. status=~"5.." catches all 5xx. The "or vector(0)" guards the
+        # case of zero errors so the series exists (evaluates to 0) instead
+        # of going empty.
+        - record: checkout:error_ratio:5m
+          expr: |
+            sum(rate(http_requests_total{path="/checkout",status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total{path="/checkout"}[5m]))
+        - record: checkout:error_ratio:30m
+          expr: |
+            sum(rate(http_requests_total{path="/checkout",status=~"5.."}[30m]))
+            /
+            sum(rate(http_requests_total{path="/checkout"}[30m]))
+        - record: checkout:error_ratio:1h
+          expr: |
+            sum(rate(http_requests_total{path="/checkout",status=~"5.."}[1h]))
+            /
+            sum(rate(http_requests_total{path="/checkout"}[1h]))
+        - record: checkout:error_ratio:2h
+          expr: |
+            sum(rate(http_requests_total{path="/checkout",status=~"5.."}[2h]))
+            /
+            sum(rate(http_requests_total{path="/checkout"}[2h]))
+        - record: checkout:error_ratio:6h
+          expr: |
+            sum(rate(http_requests_total{path="/checkout",status=~"5.."}[6h]))
+            /
+            sum(rate(http_requests_total{path="/checkout"}[6h]))
+
+    # --- Burn-rate alerts ------------------------------------------------
+    - name: checkout-slo-alerts
+      rules:
+        # FAST burn: 14.4x rate. At this rate the entire 30-day budget is
+        # gone in ~2 days. Page immediately. Long window 1h, short window 5m;
+        # BOTH must exceed the threshold. 0.001 = the 0.1% budget; x14.4 = the
+        # burn multiplier. This is your PAGE-NOW alert.
+        - alert: CheckoutAvailabilityBurn
+          expr: |
+            checkout:error_ratio:1h > (14.4 * 0.001)
+            and
+            checkout:error_ratio:5m > (14.4 * 0.001)
+          for: 2m
+          labels:
+            severity: critical
+            slo: checkout-availability
+          annotations:
+            summary: "Checkout error budget burning FAST (14.4x)"
+            description: "1h and 5m error ratio both exceed 14.4x the budget. At this rate the monthly budget is gone in ~2 days."
+
+        # MEDIUM burn: 6x. Budget gone in ~5 days. Long 6h / short 30m.
+        - alert: CheckoutAvailabilityBurnSlow
+          expr: |
+            checkout:error_ratio:6h > (6 * 0.001)
+            and
+            checkout:error_ratio:30m > (6 * 0.001)
+          for: 15m
+          labels:
+            severity: warning
+            slo: checkout-availability
+          annotations:
+            summary: "Checkout error budget burning (6x)"
+            description: "6h and 30m error ratio both exceed 6x the budget. Sustained low-grade errors eating the budget."
