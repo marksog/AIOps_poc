@@ -1,0 +1,92 @@
+# vault-values.yaml
+# Vault on EKS: 3-node Raft with KMS auto-unseal.
+
+server:
+  # The ServiceAccount is the identity everything hangs off. The annotation
+  # is what makes IRSA work: the EKS pod-identity webhook sees it, injects a
+  # projected token + AWS_ROLE_ARN + AWS_WEB_IDENTITY_TOKEN_FILE env vars,
+  # and the AWS SDK inside Vault uses them to assume the role. No keys.
+  serviceAccount:
+    create: true
+    name: vault
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::681721397035:role/aiops-poc-vault-role"
+
+  # Region for the AWS SDK's KMS calls.
+  extraEnvironmentVars:
+    AWS_REGION: us-east-1
+
+  dataStorage:
+    enabled: true
+    size: 10Gi
+    storageClass: gp3        # explicit beats relying on the default
+    accessMode: ReadWriteOnce  # EBS is single-attach by nature
+
+  ha:
+    enabled: true
+    replicas: 3              # odd number: quorum 2, tolerates 1 failure
+
+    raft:
+      enabled: true
+      setNodeId: true        # node_id = pod name, so vault-0 stays vault-0
+      config: |
+        ui = true
+
+        listener "tcp" {
+          address     = "[::]:8200"
+          cluster_address = "[::]:8201"
+          # LAB ONLY. Vault is speaking plaintext HTTP. In production this is
+          # indefensible — tokens and secrets cross the network in the clear.
+          # Step 6 (PKI) is where we fix this properly with real TLS.
+          tls_disable = true
+        }
+
+        storage "raft" {
+          path = "/vault/data"
+
+          # Each pod must be able to find the others to form the cluster.
+          # These are the StatefulSet's stable per-pod DNS names, which exist
+          # because the chart creates a headless Service. A Deployment could
+          # not do this — pods would have no stable addresses to gossip to.
+          retry_join {
+            leader_api_addr = "http://vault-0.vault-internal:8200"
+          }
+          retry_join {
+            leader_api_addr = "http://vault-1.vault-internal:8200"
+          }
+          retry_join {
+            leader_api_addr = "http://vault-2.vault-internal:8200"
+          }
+        }
+
+        # AUTO-UNSEAL. On startup Vault calls kms:Decrypt against this key to
+        # recover the master key. If IAM denies the call, the pod starts but
+        # stays SEALED — running, health-checked, and refusing to serve.
+        seal "awskms" {
+          region     = "us-east-1"
+          kms_key_id = "44efa7ef-6329-43e8-9b45-541d8dd7f134"
+        }
+
+        service_registration "kubernetes" {}
+
+  # Modest requests so three pods fit on two t3.medium nodes.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+# The UI Service. ClusterIP = reachable only inside the cluster; we port-
+# forward to it. A LoadBalancer here would put a secrets manager on the
+# public internet behind plaintext HTTP, which is exactly the wrong thing.
+ui:
+  enabled: true
+  serviceType: ClusterIP
+
+# The Agent Injector is option A from earlier — the mutating webhook that
+# injects sidecars. We're building option C (direct API from Python), so
+# leave it off for now. Turning it on later is a values change, and it's
+# worth doing once so you've seen both.
+injector:
+  enabled: false

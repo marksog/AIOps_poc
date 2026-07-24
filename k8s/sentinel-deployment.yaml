@@ -1,0 +1,41 @@
+# Sentinel running in-cluster as the `sentinel` service account. The SA is
+# what gives the pod its projected token — the identity vault_client.py uses
+# to authenticate to Vault. No API key in this manifest, no k8s secret: the
+# key comes from Vault at runtime via the pod's identity.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentinel
+  namespace: default
+  labels:
+    app: sentinel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sentinel
+  template:
+    metadata:
+      labels:
+        app: sentinel
+    spec:
+      # THE critical line: this pod runs as `sentinel`, so it gets sentinel's
+      # projected token at /var/run/secrets/.../token — which matches the
+      # Vault role's bound_service_account_names=sentinel.
+      serviceAccountName: sentinel
+      containers:
+        - name: sentinel
+          image: 681721397035.dkr.ecr.us-east-1.amazonaws.com/aiops-poc/sentinel:v1
+          env:
+            # Vault address in-cluster. vault_client.py defaults to this, but
+            # setting it explicitly documents the dependency.
+            - name: VAULT_ADDR
+              value: "http://vault.vault.svc.cluster.local:8200"
+            - name: VAULT_ROLE
+              value: "sentinel"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi

@@ -28,3 +28,4 @@ infra/bootstrap/*.tfstate.*
 
 # kube
 kubeconfig
+vault-init.json

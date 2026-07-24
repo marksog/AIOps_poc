@@ -1,0 +1,32 @@
+# k8s/storageclass-gp3.yaml
+# A CSI-backed StorageClass. The default `gp2` class on EKS points at the
+# in-tree provisioner (kubernetes.io/aws-ebs) which was REMOVED in k8s 1.23+,
+# so it cannot provision anything. This one uses the EBS CSI driver.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+  annotations:
+    # Make this the cluster default so PVCs that don't name a class get it.
+    # (We'll still name it explicitly in Vault's values — being explicit
+    # beats relying on a default that someone could change later.)
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: ebs.csi.aws.com          # the CSI driver, not the in-tree one
+parameters:
+  type: gp3
+  encrypted: "true"                    # encrypt at rest; Vault's Raft log
+                                       # is sensitive even though Vault also
+                                       # encrypts its own contents. Defense
+                                       # in depth, and free.
+# Delete = when the PVC is deleted, delete the EBS volume too. NOTE: this
+# does NOT save you from the StatefulSet trap — deleting the StatefulSet
+# does not delete the PVCs, so the volumes persist until you delete the
+# PVCs explicitly.
+reclaimPolicy: Delete
+# WaitForFirstConsumer delays volume creation until a pod is scheduled, so
+# the volume is created in the SAME AZ as the pod. Critical: EBS volumes are
+# AZ-scoped and cannot cross AZs. With Immediate binding you can provision a
+# volume in us-east-1a and then have the scheduler want the pod in 1b —
+# unschedulable forever.
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true             # lets you grow the volume later

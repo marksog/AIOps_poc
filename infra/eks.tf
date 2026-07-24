@@ -55,7 +55,8 @@ resource "aws_eks_node_group" "main" {
   # destroying the cluster).
   instance_types = ["t3.medium"]
   scaling_config {
-    desired_size = 2
+    desired_size = 3      # was 2 — third node so Vault's anti-affinity
+                          # can place one Raft member per node
     min_size     = 1
     max_size     = 3
   }
@@ -93,4 +94,63 @@ resource "aws_iam_openid_connect_provider" "eks" {
   url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
+}
+
+# ==========================================================================
+# EBS CSI DRIVER — required for any PersistentVolumeClaim to actually bind.
+# The default `gp2` StorageClass points at the IN-TREE provisioner
+# (kubernetes.io/aws-ebs), which was REMOVED in k8s 1.23+. Without this
+# addon, PVCs sit Pending forever with no clear error. Needed for Vault's
+# Raft storage (3 replicas = 3 PVCs).
+# ==========================================================================
+
+# Strip the https:// prefix from the OIDC issuer URL — IAM condition keys
+# use the bare host+path form, not a URL.
+locals {
+  oidc_provider_bare = replace(
+    aws_iam_openid_connect_provider.eks.url, "https://", ""
+  )
+}
+
+# The role the CSI CONTROLLER assumes. Same IRSA mechanism as the GitHub
+# deployer role: OIDC token -> trust policy checks the `sub` claim -> temp
+# credentials. The sub is scoped to ONE service account in ONE namespace,
+# so only the CSI controller can assume it.
+resource "aws_iam_role" "ebs_csi" {
+  name = "${var.project}-ebs-csi-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Federated = aws_iam_openid_connect_provider.eks.arn }
+      Action    = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${local.oidc_provider_bare}:aud" = "sts.amazonaws.com"
+          "${local.oidc_provider_bare}:sub" = "system:serviceaccount:kube-system:ebs-csi-controller-sa"
+        }
+      }
+    }]
+  })
+}
+
+# AWS-managed policy: create/attach/detach/delete volumes, snapshots, tags.
+resource "aws_iam_role_policy_attachment" "ebs_csi" {
+  role       = aws_iam_role.ebs_csi.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+}
+
+# The managed addon. AWS installs and maintains the controller + node
+# DaemonSet; we just supply the identity it runs as.
+resource "aws_eks_addon" "ebs_csi" {
+  cluster_name             = aws_eks_cluster.main.name
+  addon_name               = "aws-ebs-csi-driver"
+  service_account_role_arn = aws_iam_role.ebs_csi.arn
+
+  # If a conflicting config already exists, let the addon win rather than
+  # failing the apply.
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  depends_on = [aws_eks_node_group.main]
 }
