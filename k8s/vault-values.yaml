@@ -64,7 +64,7 @@ server:
         # stays SEALED — running, health-checked, and refusing to serve.
         seal "awskms" {
           region     = "us-east-1"
-          kms_key_id = "44efa7ef-6329-43e8-9b45-541d8dd7f134"
+          kms_key_id = "52b87227-fbb1-4d0a-a75d-ef77339e58e6"
         }
 
         service_registration "kubernetes" {}
